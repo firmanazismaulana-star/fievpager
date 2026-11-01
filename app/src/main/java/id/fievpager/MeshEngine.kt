@@ -29,6 +29,9 @@ import kotlin.random.Random
  * - Simpan-teruskan: pesan 30 menit terakhir dikirim ulang ke HP yang baru tersambung,
  *   jadi pesan bisa "dibawa" oleh orang yang berpindah tempat.
  *
+ * - Mode WiFi lokal (LanLink): HP di jaringan WiFi yang sama saling kirim lewat router
+ *   atau hotspot, walau internetnya mati. Pesan juga diteruskan antara kedua jalur.
+ *
  * Semua state diakses di main thread (callback Nearby juga berjalan di main thread).
  */
 class MeshEngine(ctx: Context, private val onIncoming: (Msg) -> Unit) {
@@ -40,7 +43,13 @@ class MeshEngine(ctx: Context, private val onIncoming: (Msg) -> Unit) {
         private const val TAG = "FievMesh"
         private const val RECENT_WINDOW_MS = 30 * 60 * 1000L
         private const val MAX_RECENT = 100
+        private const val LAN = "~lan"                  // penanda paket yang datang lewat WiFi lokal
+        private const val LAN_HELLO_MS = 20_000L
+        private const val LAN_PEER_TIMEOUT_MS = 70_000L
     }
+
+    private val lan = LanLink(ctx) { p -> handle(LAN, p) }
+    private val lanPeers = HashMap<String, Long>()       // nodeId -> terakhir terdengar di WiFi lokal
 
     var onPeersChanged: ((Int) -> Unit)? = null
 
@@ -78,12 +87,15 @@ class MeshEngine(ctx: Context, private val onIncoming: (Msg) -> Unit) {
         advertise()
         discover()
         main.postDelayed(tick, 20_000)
+        if (MeshState.lanEnabled.value) startLan()
     }
 
     fun stop() {
         if (!running) return
         running = false
         main.removeCallbacksAndMessages(null)
+        lan.stop()
+        lanPeers.clear()
         client.stopAdvertising()
         client.stopDiscovery()
         client.stopAllEndpoints()
@@ -99,6 +111,41 @@ class MeshEngine(ctx: Context, private val onIncoming: (Msg) -> Unit) {
         if (running) {
             client.stopAdvertising()
             advertise()
+        }
+    }
+
+    fun setLanEnabled(on: Boolean) {
+        MeshState.setLanEnabled(on)
+        if (!running) return
+        if (on) {
+            startLan()
+        } else {
+            main.removeCallbacks(lanTick)
+            lan.stop()
+            lanPeers.clear()
+            publishPeers()
+        }
+    }
+
+    private fun startLan() {
+        lan.start()
+        main.removeCallbacks(lanTick)
+        main.postDelayed(lanTick, 500)
+    }
+
+    /** Kabar kehadiran di WiFi lokal tiap 20 detik, dan lupakan HP yang sudah tidak terdengar. */
+    private val lanTick = object : Runnable {
+        override fun run() {
+            if (!running || !lan.isRunning) return
+            val h = hello().copy(ttl = 0)
+            seen[h.id] = now()
+            lan.send(h)
+            val cutoff = now() - LAN_PEER_TIMEOUT_MS
+            if (lanPeers.values.any { it < cutoff }) {
+                lanPeers.entries.removeAll { it.value < cutoff }
+                publishPeers()
+            }
+            main.postDelayed(this, LAN_HELLO_MS)
         }
     }
 
@@ -214,8 +261,17 @@ class MeshEngine(ctx: Context, private val onIncoming: (Msg) -> Unit) {
     }
 
     private fun publishPeers() {
-        MeshState.setDirect(connected.values.toSet())
-        onPeersChanged?.invoke(connected.size)
+        val nearby = connected.values.toSet()
+        val viaLan = lanPeers.keys.toSet()
+        MeshState.setDirect(nearby, viaLan)
+        onPeersChanged?.invoke((nearby + viaLan).size)
+    }
+
+    /** HP baru terdengar di WiFi lokal: bagikan pesan terbaru ke jaringan itu. */
+    private fun onNewLanPeer() {
+        pruneRecent()
+        recent.forEach { (p, _) -> lan.send(p) }
+        MeshState.markWaitingAsSent()
     }
 
     /** HP baru tersambung: perkenalkan diri dan bagikan pesan terbaru (simpan-teruskan). */
@@ -246,8 +302,23 @@ class MeshEngine(ctx: Context, private val onIncoming: (Msg) -> Unit) {
         if (seen.containsKey(p.id)) return
         seen[p.id] = now()
 
-        val isDirect = connected.values.contains(p.src)
-        MeshState.upsertNode(Node(p.src, p.srcName, if (isDirect) 0 else p.hop, now(), isDirect))
+        // Kabar kehadiran langsung dari HP di WiFi lokal yang sama.
+        var newLanPeer = false
+        if (fromEndpoint == LAN && p.kind == "hello" && p.hop == 0) {
+            newLanPeer = !lanPeers.containsKey(p.src)
+            lanPeers[p.src] = now()
+        }
+
+        val viaNearby = connected.values.contains(p.src)
+        val viaLan = lanPeers.containsKey(p.src)
+        val isDirect = viaNearby || viaLan
+        MeshState.upsertNode(
+            Node(p.src, p.srcName, if (isDirect) 0 else p.hop, now(), isDirect, lan = viaLan && !viaNearby)
+        )
+        if (newLanPeer) {
+            publishPeers()
+            onNewLanPeer()
+        }
 
         when (p.kind) {
             "msg" -> if (p.dst == BROADCAST || p.dst == me) {
@@ -276,6 +347,8 @@ class MeshEngine(ctx: Context, private val onIncoming: (Msg) -> Unit) {
             if (r.kind != "hello") remember(r)
             val targets = connected.keys.filter { it != fromEndpoint }
             if (targets.isNotEmpty()) sendTo(targets, r)
+            // Jembatan: pesan dari Bluetooth/WiFi Direct diteruskan ke WiFi lokal.
+            if (fromEndpoint != LAN && lan.isRunning) lan.send(r)
         }
     }
 
@@ -301,9 +374,9 @@ class MeshEngine(ctx: Context, private val onIncoming: (Msg) -> Unit) {
         seen[p.id] = now()
         if (p.kind != "hello") remember(p)
         val targets = connected.keys.toList()
-        if (targets.isEmpty()) return false
-        sendTo(targets, p)
-        return true
+        if (targets.isNotEmpty()) sendTo(targets, p)
+        if (lan.isRunning) lan.send(p)
+        return targets.isNotEmpty() || lanPeers.isNotEmpty()
     }
 
     private fun sendTo(targets: List<String>, p: Packet) {

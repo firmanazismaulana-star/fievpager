@@ -109,4 +109,5 @@ data class Node(
     val hops: Int,
     val lastSeen: Long,
     val direct: Boolean,
+    val lan: Boolean = false,     // terhubung lewat WiFi lokal (router/hotspot)
 )

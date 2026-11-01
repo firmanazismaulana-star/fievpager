@@ -9,6 +9,7 @@ Pager tanpa internet untuk Android. HP saling terhubung lewat **Bluetooth dan Wi
 - Setiap HP otomatis jadi penerus pesan (maksimal 6 lompatan)
 - Simpan-teruskan: pesan 30 menit terakhir dibagikan ke HP yang baru tersambung
 - Tetap aktif di latar seperti pager, dengan notifikasi bunyi dan getar
+- **Mode WiFi lokal**: HP di jaringan WiFi yang sama (router atau hotspot HP) saling kirim pesan walau internet mati
 
 ## Memasang
 1. Buka halaman **Releases** repo ini dari HP, lalu unduh `FievPager.apk` terbaru.
@@ -25,6 +26,8 @@ Syarat: Android 8.0 ke atas dengan Google Play Services (hampir semua HP Android
 | Area terbuka | 50–100 m |
 
 Jangkauan total bertambah dengan setiap HP yang aktif di antara pengirim dan penerima.
+
+Dengan Mode WiFi lokal, jangkauannya sejauh jaringan WiFi yang dipakai bersama. WiFi tamu di kafe atau kantor sering memblokir sambungan antar-perangkat; pakai router sendiri atau hotspot HP.
 
 ## Regulasi
 Bluetooth dan WiFi bekerja di pita 2,4 GHz/5 GHz yang bebas izin untuk perangkat bersertifikat. Aplikasi ini hanya memakai radio bawaan HP, jadi tidak memancar di frekuensi lain.

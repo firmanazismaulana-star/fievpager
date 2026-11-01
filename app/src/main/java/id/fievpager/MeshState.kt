@@ -17,6 +17,7 @@ object MeshState {
     val running = MutableStateFlow(false)
     val error = MutableStateFlow<String?>(null)
     val myName = MutableStateFlow("")
+    val lanEnabled = MutableStateFlow(true)
     var myId: String = ""
         private set
 
@@ -31,6 +32,7 @@ object MeshState {
         store = s
         myId = s.nodeId()
         myName.value = s.name()
+        lanEnabled.value = s.lan()
         messages.value = s.loadMessages()
     }
 
@@ -68,8 +70,15 @@ object MeshState {
         nodes.update { it + (n.id to n) }
     }
 
-    fun setDirect(ids: Set<String>) {
-        nodes.update { m -> m.mapValues { (k, v) -> v.copy(direct = k in ids) } }
+    fun setDirect(nearby: Set<String>, viaLan: Set<String>) {
+        nodes.update { m ->
+            m.mapValues { (k, v) -> v.copy(direct = k in nearby || k in viaLan, lan = k in viaLan && k !in nearby) }
+        }
+    }
+
+    fun setLanEnabled(on: Boolean) {
+        lanEnabled.value = on
+        store?.saveLan(on)
     }
 
     fun nameOf(id: String): String =
@@ -97,6 +106,12 @@ class Store(ctx: Context) {
 
     fun saveName(n: String) {
         prefs.edit().putString("name", n).apply()
+    }
+
+    fun lan(): Boolean = prefs.getBoolean("lan", true)
+
+    fun saveLan(on: Boolean) {
+        prefs.edit().putBoolean("lan", on).apply()
     }
 
     fun loadMessages(): List<Msg> = try {

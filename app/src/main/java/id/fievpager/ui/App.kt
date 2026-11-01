@@ -226,7 +226,12 @@ private fun MainScreen(onStart: () -> Unit, onStop: () -> Unit) {
     )
 
     Scaffold(
-        topBar = { TopStrip(name, running, error, nodes.values.count { it.direct }, nodes.size) },
+        topBar = {
+            TopStrip(
+                name, running, error,
+                nodes.values.count { it.direct }, nodes.values.count { it.lan }, nodes.size,
+            )
+        },
         bottomBar = {
             NavigationBar {
                 tabs.forEachIndexed { i, (label, icon) ->
@@ -252,7 +257,7 @@ private fun MainScreen(onStart: () -> Unit, onStop: () -> Unit) {
 }
 
 @Composable
-private fun TopStrip(name: String, running: Boolean, error: String?, direct: Int, known: Int) {
+private fun TopStrip(name: String, running: Boolean, error: String?, direct: Int, viaLan: Int, known: Int) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -282,6 +287,7 @@ private fun TopStrip(name: String, running: Boolean, error: String?, direct: Int
             error != null -> error
             !running -> "Jaringan mati. Nyalakan di tab Atur."
             direct == 0 -> "Mencari HP di sekitar…"
+            viaLan > 0 -> "$direct HP terhubung ($viaLan lewat WiFi lokal) · $known dikenal"
             else -> "$direct HP terhubung langsung · $known dikenal di jaringan"
         }
         Text(status, color = if (error != null) Pal.warn else Pal.caseText, fontSize = 13.sp)
@@ -404,7 +410,7 @@ private fun RecipientPicker(to: String, nodes: Map<String, Node>, onTo: (String)
             DropdownMenuItem(text = { Text("Semua (siaran)") }, onClick = { onTo(BROADCAST); open = false })
             nodes.values.sortedBy { it.name.lowercase() }.forEach { n ->
                 DropdownMenuItem(
-                    text = { Text("${n.name}  ·  ${hopLabel(n.hops, n.direct)}") },
+                    text = { Text("${n.name}  ·  ${nodeLabel(n)}") },
                     onClick = { onTo(n.id); open = false },
                 )
             }
@@ -501,7 +507,7 @@ private fun NearbyTab(nodes: Map<String, Node>, now: Long, onMessage: (String) -
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(n.name, fontFamily = Mono, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Text(
-                            "ID ${n.id} · ${hopLabel(n.hops, n.direct)}",
+                            "ID ${n.id} · ${nodeLabel(n)}",
                             fontFamily = Mono, fontSize = 13.sp, color = cs.onSurfaceVariant,
                         )
                         Text("Terlihat ${ago(n.lastSeen, now)}", fontSize = 12.sp, color = cs.onSurfaceVariant)
@@ -522,6 +528,7 @@ private fun SettingsTab(name: String, running: Boolean, onStart: () -> Unit, onS
     var draft by rememberSaveable(name) { mutableStateOf(name) }
     var confirmClear by remember { mutableStateOf(false) }
     var batteryOk by remember { mutableStateOf(isIgnoringBattery(ctx)) }
+    val lanOn by MeshState.lanEnabled.collectAsState()
 
     Column(
         Modifier
@@ -541,6 +548,23 @@ private fun SettingsTab(name: String, running: Boolean, onStart: () -> Unit, onS
                     )
                 }
                 Switch(checked = running, onCheckedChange = { if (it) onStart() else onStop() })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Mode WiFi lokal", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Kirim pesan lewat router WiFi yang sama, walau internetnya mati. " +
+                            "Tanpa router? Satu HP menyalakan hotspot, HP lain menyambung ke hotspot itu.",
+                        fontSize = 13.sp,
+                    )
+                }
+                Switch(
+                    checked = lanOn,
+                    onCheckedChange = { on ->
+                        val e = MeshState.engine
+                        if (e != null) e.setLanEnabled(on) else MeshState.setLanEnabled(on)
+                    },
+                )
             }
             if (!batteryOk) {
                 OutlinedButton(onClick = {
@@ -578,6 +602,9 @@ private fun SettingsTab(name: String, running: Boolean, onStart: () -> Unit, onS
                 "HP terhubung langsung ke HP lain di sekitar lewat Bluetooth atau WiFi Direct, tanpa internet " +
                     "dan tanpa router. Jarak satu sambungan sekitar 10–100 meter. Setiap HP yang aktif ikut " +
                     "meneruskan pesan, maksimal ${MeshEngine.MAX_TTL} kali lompatan.\n\n" +
+                    "Dengan Mode WiFi lokal, semua HP di jaringan WiFi yang sama (router atau hotspot HP) " +
+                    "saling terhubung sejauh jangkauan WiFi itu. Internet tidak dipakai. HP yang tersambung " +
+                    "ke WiFi sekaligus dekat HP lain menjadi jembatan antara kedua jalur.\n\n" +
                     "Pesan 30 menit terakhir juga dibagikan ke HP yang baru tersambung, jadi orang yang " +
                     "berpindah tempat ikut membawa pesan.",
                 fontSize = 14.sp,
@@ -588,14 +615,17 @@ private fun SettingsTab(name: String, running: Boolean, onStart: () -> Unit, onS
             Text(
                 "• Bluetooth, WiFi, dan Lokasi menyala (WiFi tidak perlu tersambung ke jaringan mana pun)\n" +
                     "• Aplikasi dibuka minimal sekali setelah HP dinyalakan\n" +
-                    "• Makin banyak HP yang aktif, makin jauh jangkauan pesan",
+                    "• Makin banyak HP yang aktif, makin jauh jangkauan pesan\n" +
+                    "• Mode WiFi lokal: semua HP tersambung ke WiFi yang sama. WiFi tamu di kafe atau kantor " +
+                    "sering memblokir sambungan antar-perangkat, jadi pakai router sendiri atau hotspot HP",
                 fontSize = 14.sp,
             )
         }
 
         Section("Privasi") {
             Text(
-                "Sambungan antar-HP dienkripsi, tetapi isi pesan bisa dibaca HP yang meneruskannya. " +
+                "Sambungan Bluetooth/WiFi Direct dienkripsi, tetapi isi pesan bisa dibaca HP yang meneruskannya. " +
+                    "Di Mode WiFi lokal, pesan juga bisa dilihat perangkat lain di jaringan WiFi yang sama. " +
                     "Jangan kirim kata sandi, PIN, atau data pribadi lewat FievPager.",
                 fontSize = 14.sp,
             )
@@ -603,7 +633,7 @@ private fun SettingsTab(name: String, running: Boolean, onStart: () -> Unit, onS
 
         OutlinedButton(onClick = { confirmClear = true }) { Text("Hapus riwayat pesan") }
         Text(
-            "FievPager 0.1 · ID ${MeshState.myId}",
+            "FievPager 0.2 · ID ${MeshState.myId}",
             fontFamily = Mono, fontSize = 12.sp, color = cs.onBackground.copy(alpha = 0.6f),
         )
     }
@@ -641,6 +671,9 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
 
 private fun hopLabel(hops: Int, direct: Boolean): String =
     if (direct || hops <= 0) "langsung" else "lewat $hops HP"
+
+private fun nodeLabel(n: Node): String =
+    if (n.lan) "lewat WiFi lokal" else hopLabel(n.hops, n.direct)
 
 private fun clock(ts: Long): String = SimpleDateFormat("HH:mm", Locale("id", "ID")).format(Date(ts))
 

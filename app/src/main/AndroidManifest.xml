@@ -15,6 +15,10 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
 
+    <!-- Mode WiFi lokal: UDP broadcast di jaringan WiFi/hotspot yang sama (tidak butuh internet) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
     <!-- Berjalan di latar belakang seperti pager -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
